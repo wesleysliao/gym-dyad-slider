@@ -11,11 +11,13 @@ import trajectory_tools
 # importlib.reload(trajectory_tools)
 from trajectory_tools import Trajectory
 import numpy as np
+import gym
+from gym import spaces
 
 class PhysicalDyads():
     
-    allowable_keys = ('obj_mass', 'obj_fric', 'tstep', 'duration', 'failure_error',
-                      'f_bound', 'max_ref', 'max_freq')
+#     allowable_keys = ('obj_mass', 'obj_fric', 'tstep', 'duration', 'failure_error',
+#                       'f_bound', 'max_ref', 'max_freq')
 
     # internal methods
     def __init__(self, env_id=None, seed_=None, config_file=None, **kwargs):
@@ -42,7 +44,7 @@ class PhysicalDyads():
         
         for section in Config.sections():
             for key in Config.options(section):
-                if key in self.allowable_keys:
+                if True: #key in self.allowable_keys:
                     val = Config.get(section, key)
                     try:
                         val = float(val)
@@ -56,7 +58,7 @@ class PhysicalDyads():
         
             for section in Config.sections():
                 for key in Config.options(section):
-                    if key in self.allowable_keys:
+                    if True: #key in self.allowable_keys:
                         val = Config.get(section, key)
                         try:
                             val = float(val)
@@ -66,13 +68,26 @@ class PhysicalDyads():
         
         # Read the kwargs and override params from config file.
         for key in kwargs:
-            if key in self.allowable_keys:
+            if True: #key in self.allowable_keys:
                 setattr(self, key, kwargs[key])
 
     
     
     
         self.max_err = self.max_ref*self.failure_error
+        
+        act_high = np.array([self.force_max, self.force_max])
+        self.action_space = spaces.Box(-act_high, act_high, dtype=np.float32)
+        
+        obs_high = np.array([self.max_err * 2,
+                         np.finfo(np.float32).max,
+                         self.force_max,
+                         np.finfo(np.float32).max],
+                        dtype=np.float32)
+        
+        self.observation_space = spaces.Box(-obs_high, obs_high, dtype=np.float32)
+        
+        self.nS = 4
         # Initialize state variables
         self.step_i =0
         self.x, self.v, self.f1_old, self.f2_old = 0., 0., 0., 0.
@@ -80,6 +95,7 @@ class PhysicalDyads():
         self.traj_creator = Trajectory(self.tstep, seed_=seed_)
         self.traj_time, self.traj = None, None
         self._max_episode_steps = int(self.duration/self.tstep)
+        
         
     
     def get_time(self):
@@ -151,7 +167,7 @@ class PhysicalDyads():
 #         return (reference, state, normal force), reward, done, _
     # action is a tuple of two forces
     # Calling step() after the episode is done will return None.
-    
+        assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
         if self.done is True:
             print('Warning: Episode has ended. Reset the environment!')
             return None
@@ -163,7 +179,7 @@ class PhysicalDyads():
         self.done = self.is_terminal(r) # Check terminal
         
         # Update object state
-        f1, f2 = action
+        f1, f2 = action[0], action[1]
         net_f = f1-f2
         net_df = net_f - (self.f1_old-self.f2_old)
         self._update_state(net_f, net_df, t, self.tstep)
