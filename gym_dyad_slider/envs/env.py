@@ -135,7 +135,7 @@ class PhysicalDyads():
 #         # Do not use Python's native random generator for consistency
 #         raise NotImplementedError
         
-    def reset(self, renew_traj=False):
+    def reset(self, renew_traj=True):
         # Resets the initial state and the reference trajectories. 
         # Call this function before a new episode starts.
 #         return initial observations
