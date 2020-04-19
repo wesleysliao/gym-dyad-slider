@@ -1,1 +1,1 @@
-# Init file
+from gym_dyad_slider.envs.dyad_slider_env import DyadSliderEnv
