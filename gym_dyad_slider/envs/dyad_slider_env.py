@@ -44,16 +44,17 @@ class DyadSliderEnv(gym.Env):
                  agent_force_min = -1.0,
                  agent_force_max = 1.0,
 
-                 force_net_limits = np.array([-1.0, 1.0]),
-                 force_interaction_limits = np.array([-1.0, 1.0]),
+                 force_net_limits = np.array([-np.inf, np.inf]),
+                 force_interaction_limits = np.array([-np.inf, np.inf]),
 
                  slider_mass = 1.0,
-                 slider_friction_coeff = 0.1,
-                 slider_range = np.array([-1.0, 1.0]),
+                 slider_friction_coeff = 0.0,
+                 slider_limits = np.array([-1.0, 1.0]),
 
                  reference_trajectory_fn = lambda x: np.sin(x * np.pi),
     ):
 
+        self.simulation_freq_Hz = simulation_freq_Hz
         self.simulation_timestep_s = 1.0 / simulation_freq_Hz
         self.action_timestep_s = 1.0 / action_freq_Hz
         self.simsteps_per_action = int(simulation_freq_Hz / action_freq_Hz)
@@ -61,6 +62,9 @@ class DyadSliderEnv(gym.Env):
         self.episode_length_s = episode_length_s
 
         self.n_agents = n_agents
+
+        self.agent_force_min = agent_force_min
+        self.agent_force_max = agent_force_max
 
         if np.isscalar(agent_force_min):
             self.action_space = spaces.Box(low = agent_force_min,
@@ -74,7 +78,8 @@ class DyadSliderEnv(gym.Env):
 
         self.slider_mass = slider_mass
         self.slider_friction_coeff = slider_friction_coeff
-        self.slider_range = slider_range
+        self.slider_limits = slider_limits
+        self.slider_range = slider_limits[1] - slider_limits[0]
 
         self.force_net_limits = force_net_limits
         self.force_interaction_limits = force_interaction_limits
@@ -95,8 +100,17 @@ class DyadSliderEnv(gym.Env):
         force_net_0, force_net_dot_0, \
         force_interaction_0, force_interaction_dot_0 = self.state
 
-        force_interaction_1 = np.min(action)
-        force_net_1 = np.max(action) - force_interaction_1
+        action = np.clip(action, self.agent_force_min, self.agent_force_max)
+
+        p1_force, p2_force = action
+        if (p1_force <= 0 and p2_force <= 0
+            or p1_force >= 0 and p2_force >= 0):
+            force_interaction_1 = min(p1_force, p2_force)
+        else:
+            force_interaction_1 = 0.0
+
+        p2_force *= -1.0
+        force_net_1 = p1_force + p2_force
 
         force_net_dot_1 = force_net_1 - force_net_0
         force_interaction_dot_1 = force_interaction_1 - force_interaction_0
@@ -106,9 +120,9 @@ class DyadSliderEnv(gym.Env):
         for t in np.linspace(self.t, self.t + self.action_timestep_s, self.simsteps_per_action):
 
             r_1 = self.reference_trajectory_fn(t)
-            r_dot_1 = r_1 - r_0
+            r_dot_1 = (r_1 - r_0) / self.simulation_timestep_s
 
-            acceleration = force_net_1 / self.slider_mass
+            acceleration = (force_net_1 - (self.slider_friction_coeff * x_dot_0)) / self.slider_mass
 
             x_dot_1 = x_dot_0 + (acceleration * self.simulation_timestep_s)
             x_1 = x_0 + (x_dot_1 * self.simulation_timestep_s)
@@ -117,20 +131,21 @@ class DyadSliderEnv(gym.Env):
                                   force_net_1, force_net_dot_1,
                                   force_interaction_1, force_interaction_dot_1])
 
-            self.error -= abs(x_1 - r_1)
-
-            print(t)
 
             if ((t >= self.episode_length_s)
-                 or (x_1 < self.slider_range[0])
-                 or (x_1 > self.slider_range[1])):
+                or (x_1 < self.slider_limits[0])
+                or (x_1 > self.slider_limits[1])
+                or (force_net_1 < self.force_net_limits[0])
+                or (force_net_1 > self.force_net_limits[1])
+                or (force_interaction_1 < self.force_interaction_limits[0])
+                or (force_interaction_1 > self.force_interaction_limits[1])
+               ):
                 done = True
                 break
 
         self.t = t
 
-
-        reward = self.error
+        reward = self.action_timestep_s * (1.0 - (abs(x_1 - r_1) / self.slider_range) )
 
         return self.observe(self.state), reward, done
 
@@ -158,7 +173,7 @@ class DyadSliderEnv(gym.Env):
         screen_height = 400
 
 
-        world_height = self.slider_range[0] - self.slider_range[1]
+        world_height = self.slider_range
         scale_y = screen_height / world_height
 
         scale_x = 1.0 * (screen_width / 2)
