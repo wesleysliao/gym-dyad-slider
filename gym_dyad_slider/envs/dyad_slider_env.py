@@ -92,8 +92,6 @@ class DyadSliderEnv(gym.Env):
         force_net_0, force_net_dot_0, \
         force_interaction_0, force_interaction_dot_0 = self.state
 
-        self.effort += action
-
         force_interaction_1 = np.min(action)
         force_net_1 = np.max(action) - force_interaction_1
 
@@ -114,22 +112,23 @@ class DyadSliderEnv(gym.Env):
                                   force_net_1, force_net_dot_1,
                                   force_interaction_1, force_interaction_dot_1])
 
+            self.error -= abs(x_1 - r_1)
+
             if t >= self.episode_length_s:
                 done = True
                 self.t += t
                 break
 
 
-        rewards = self.effort + self.error
+        reward = self.error
 
-        return self.observe(self.state), rewards, done
+        return self.observe(self.state), reward, done
 
 
     def reset(self):
 
         self.t = 0.0
         self.error = 0.0
-        self.effort = np.zeros((self.n_agents,))
 
         #state = x, x_dot, r, r_dot, force_net, force_net_dot, force_interaction, force_interaction_dot
         self.state = np.zeros((8,), dtype=np.float32)
@@ -141,11 +140,8 @@ class DyadSliderEnv(gym.Env):
         force_net, force_net_dot, \
         force_interaction, force_interaction_dot = state
 
-        error = x - r
-        error_dot = x_dot - r_dot
-
-        return np.array([error, error_dot, force_interaction, force_interaction_dot])
-
+        return np.array([x, x_dot, r, r_dot,
+                         force_interaction, force_interaction_dot])
 
     def render(self, mode='human'):
         print("render lol", self.state)
