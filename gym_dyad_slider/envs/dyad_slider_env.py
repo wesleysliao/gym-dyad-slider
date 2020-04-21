@@ -31,12 +31,12 @@ class DyadSliderEnv(gym.Env):
 
     metadata = {
         'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second' : 30,
+        'video.frames_per_second' : 50,
     }
 
     def __init__(self,
-                 simulation_freq_Hz = 1200,
-                 action_freq_Hz = 300,
+                 simulation_freq_Hz = 1000,
+                 action_freq_Hz = 100,
 
                  episode_length_s = 30.0,
 
@@ -74,6 +74,7 @@ class DyadSliderEnv(gym.Env):
 
         self.slider_mass = slider_mass
         self.slider_friction_coeff = slider_friction_coeff
+        self.slider_range = slider_range
 
         self.force_net_limits = force_net_limits
         self.force_interaction_limits = force_interaction_limits
@@ -82,6 +83,8 @@ class DyadSliderEnv(gym.Env):
 
 
         self.reset()
+       
+        self.viewer = None
 
 
     def step(self, action):
@@ -97,6 +100,8 @@ class DyadSliderEnv(gym.Env):
 
         force_net_dot_1 = force_net_1 - force_net_0
         force_interaction_dot_1 = force_interaction_1 - force_interaction_0
+
+        t = self.t
 
         for t in np.linspace(self.t, self.t + self.action_timestep_s, self.simsteps_per_action):
 
@@ -114,10 +119,15 @@ class DyadSliderEnv(gym.Env):
 
             self.error -= abs(x_1 - r_1)
 
-            if t >= self.episode_length_s:
+            print(t)
+
+            if ((t >= self.episode_length_s)
+                 or (x_1 < self.slider_range[0])
+                 or (x_1 > self.slider_range[1])):
                 done = True
-                self.t += t
                 break
+
+        self.t = t
 
 
         reward = self.error
@@ -144,7 +154,58 @@ class DyadSliderEnv(gym.Env):
                          force_interaction, force_interaction_dot])
 
     def render(self, mode='human'):
-        print("render lol", self.state)
+        screen_width = 600
+        screen_height = 400
+
+
+        world_height = self.slider_range[0] - self.slider_range[1]
+        scale_y = screen_height / world_height
+
+        scale_x = 1.0 * (screen_width / 2)
+
+        egg_x = screen_width / 2
+        egg_width = 20.0
+        egg_height = 30.0
+
+        reference_width = 2.0
+        reference_x_resolution = int(10 * self.episode_length_s)
+
+        reference_points = np.zeros((reference_x_resolution, 2))
+        reference_scale = np.linspace(0, self.episode_length_s, reference_x_resolution)
+        reference_points[:, 0] = (scale_x * reference_scale) + (screen_width / 2)
+        reference_points[:, 1] = scale_y * self.reference_trajectory_fn(reference_scale)
+
+
+        if self.viewer is None:
+            from gym.envs.classic_control import rendering
+            self.viewer = rendering.Viewer(screen_width, screen_height)
+            l,r,t,b = -egg_width / 2, egg_width / 2, egg_height / 2, -egg_height / 2
+            egg = rendering.FilledPolygon([(l,0), (0,t), (r,0), (0,b)])
+            self.egg_transform = rendering.Transform()
+            egg.add_attr(self.egg_transform)
+            self.viewer.add_geom(egg)
+
+            reference = rendering.PolyLine(reference_points, False)
+            self.reference_transform = rendering.Transform()
+            reference.add_attr(self.reference_transform)
+            self.viewer.add_geom(reference)
+
+        if self.state is None: return None
+
+
+        x, x_dot, r, r_dot, \
+        force_net, force_net_dot, \
+        force_interaction, force_interaction_dot = self.state
+
+        egg_y = (x * scale_y) + (screen_height / 2)
+        self.egg_transform.set_translation(egg_x, egg_y)
+
+        self.reference_transform.set_translation(-self.t * scale_x, screen_height / 2)
+
+        return self.viewer.render(return_rgb_array = mode=='rgb_array')
+
 
     def close(self):
-        pass
+        if self.viewer:
+            self.viewer.close()
+            self.viewer = None
