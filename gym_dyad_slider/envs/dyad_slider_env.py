@@ -4,7 +4,7 @@ from gym.utils import seeding
 
 
 import numpy as np
-import scipy as sp
+
 
 
 class DyadSliderEnv(gym.Env):
@@ -52,14 +52,18 @@ class DyadSliderEnv(gym.Env):
                  slider_limits = np.array([-1.0, 1.0]),
 
                  reference_trajectory_fn = lambda x: np.sin(x * np.pi),
+
+                 integration = "euler",
     ):
 
         self.simulation_freq_Hz = simulation_freq_Hz
         self.simulation_timestep_s = 1.0 / simulation_freq_Hz
         self.action_timestep_s = 1.0 / action_freq_Hz
         self.simsteps_per_action = int(simulation_freq_Hz / action_freq_Hz)
-        self.max_episode_steps = int(simulation_freq_Hz * episode_length_s)
+        self.max_episode_steps = int(action_freq_Hz * episode_length_s)
         self.episode_length_s = episode_length_s
+
+        self.integration = integration
 
         self.n_agents = n_agents
 
@@ -115,35 +119,39 @@ class DyadSliderEnv(gym.Env):
         force_net_dot_1 = force_net_1 - force_net_0
         force_interaction_dot_1 = force_interaction_1 - force_interaction_0
 
-        t = self.t
+        if self.integration == "euler":
 
-        for t in np.linspace(self.t, self.t + self.action_timestep_s, self.simsteps_per_action):
+            t = self.t
 
-            r_1 = self.reference_trajectory_fn(t)
-            r_dot_1 = (r_1 - r_0) / self.simulation_timestep_s
+            for t in np.linspace(self.t + self.simulation_timestep_s,
+                                 self.t + self.action_timestep_s,
+                                 self.simsteps_per_action):
 
-            acceleration = (force_net_1 - (self.slider_friction_coeff * x_dot_0)) / self.slider_mass
+                r_1 = self.reference_trajectory_fn(t)
+                r_dot_1 = (r_1 - r_0) / self.simulation_timestep_s
 
-            x_dot_1 = x_dot_0 + (acceleration * self.simulation_timestep_s)
-            x_1 = x_0 + (x_dot_1 * self.simulation_timestep_s)
+                acceleration = (force_net_1 - (self.slider_friction_coeff * x_dot_0)) / self.slider_mass
 
-            self.state = np.array([x_1, x_dot_1, r_1, r_dot_1,
-                                  force_net_1, force_net_dot_1,
-                                  force_interaction_1, force_interaction_dot_1])
+                x_dot_1 = x_dot_0 + (acceleration * self.simulation_timestep_s)
+                x_1 = x_0 + (x_dot_1 * self.simulation_timestep_s)
+
+                self.state = np.array([x_1, x_dot_1, r_1, r_dot_1,
+                                    force_net_1, force_net_dot_1,
+                                    force_interaction_1, force_interaction_dot_1])
 
 
-            if ((t >= self.episode_length_s)
-                or (x_1 < self.slider_limits[0])
-                or (x_1 > self.slider_limits[1])
-                or (force_net_1 < self.force_net_limits[0])
-                or (force_net_1 > self.force_net_limits[1])
-                or (force_interaction_1 < self.force_interaction_limits[0])
-                or (force_interaction_1 > self.force_interaction_limits[1])
-               ):
-                done = True
-                break
+                if ((t >= self.episode_length_s)
+                    or (x_1 < self.slider_limits[0])
+                    or (x_1 > self.slider_limits[1])
+                    or (force_net_1 < self.force_net_limits[0])
+                    or (force_net_1 > self.force_net_limits[1])
+                    or (force_interaction_1 < self.force_interaction_limits[0])
+                    or (force_interaction_1 > self.force_interaction_limits[1])
+                ):
+                    done = True
+                    break
 
-        self.t = t
+            self.t = t
 
         reward = self.action_timestep_s * (1.0 - (abs(x_1 - r_1) / self.slider_range) )
 
