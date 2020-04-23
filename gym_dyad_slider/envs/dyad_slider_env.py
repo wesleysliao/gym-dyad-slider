@@ -4,7 +4,7 @@ from gym.utils import seeding
 
 
 import numpy as np
-
+from scipy.integrate import RK45
 
 
 class DyadSliderEnv(gym.Env):
@@ -53,7 +53,7 @@ class DyadSliderEnv(gym.Env):
 
                  reference_trajectory_fn = lambda x: np.sin(x * np.pi),
 
-                 integration = "euler",
+                 integration = "euler", # "rk45"
     ):
 
         self.simulation_freq_Hz = simulation_freq_Hz
@@ -107,8 +107,7 @@ class DyadSliderEnv(gym.Env):
         action = np.clip(action, self.agent_force_min, self.agent_force_max)
 
         p1_force, p2_force = action
-        if (p1_force <= 0 and p2_force <= 0
-            or p1_force >= 0 and p2_force >= 0):
+        if (p1_force <= 0 and p2_force <= 0 or p1_force >= 0 and p2_force >= 0):
             force_interaction_1 = min(p1_force, p2_force)
         else:
             force_interaction_1 = 0.0
@@ -116,55 +115,80 @@ class DyadSliderEnv(gym.Env):
         p2_force *= -1.0
         force_net_1 = p1_force + p2_force
 
-        force_net_dot_1 = force_net_1 - force_net_0
-        force_interaction_dot_1 = force_interaction_1 - force_interaction_0
+        force_net_dot_1 = (force_net_1 - force_net_0) / self.action_timestep_s
+        force_interaction_dot_1 = (force_interaction_1 - force_interaction_0) / self.action_timestep_s
 
-        if self.integration == "euler":
+        r_1 = self.reference_trajectory_fn(self.t + self.action_timestep_s)
+        r_dot_1 = (r_1 - r_0) / self.action_timestep_s
 
-            t = self.t
+        self.state[2:] = np.array([r_1, r_dot_1,
+                                   force_net_1, force_net_dot_1,
+                                   force_interaction_1, force_interaction_dot_1])
 
-            for t in np.linspace(self.t + self.simulation_timestep_s,
-                                 self.t + self.action_timestep_s,
-                                 self.simsteps_per_action):
+        if self.check_force_limits(self.state):
+            done = True
 
-                r_1 = self.reference_trajectory_fn(t)
-                r_dot_1 = (r_1 - r_0) / self.simulation_timestep_s
+        elif self.integration == "euler":
+            x_1, x_dot_1 = x_0, x_dot_0
+            for i in range(self.simsteps_per_action):
+                velocity, acceleration = self.slider_dynamics(None, [x_1, x_dot_1])
 
-                acceleration = (force_net_1 - (self.slider_friction_coeff * x_dot_0)) / self.slider_mass
+                x_dot_1 += (acceleration * self.simulation_timestep_s)
+                x_1 += (velocity * self.simulation_timestep_s)
 
-                x_dot_1 = x_dot_0 + (acceleration * self.simulation_timestep_s)
-                x_1 = x_0 + (x_dot_1 * self.simulation_timestep_s)
-
-                self.state = np.array([x_1, x_dot_1, r_1, r_dot_1,
-                                    force_net_1, force_net_dot_1,
-                                    force_interaction_1, force_interaction_dot_1])
-
-
-                if ((t >= self.episode_length_s)
-                    or (x_1 < self.slider_limits[0])
-                    or (x_1 > self.slider_limits[1])
-                    or (force_net_1 < self.force_net_limits[0])
-                    or (force_net_1 > self.force_net_limits[1])
-                    or (force_interaction_1 < self.force_interaction_limits[0])
-                    or (force_interaction_1 > self.force_interaction_limits[1])
-                ):
+                if self.check_x_limits(self.state):
                     done = True
                     break
 
-            self.t = t
+            self.state[:2] = np.array([x_1, x_dot_1])
+            self.t += self.action_timestep_s
 
-        reward = self.action_timestep_s * (1.0 - (abs(x_1 - r_1) / self.slider_range) )
+        elif self.integration == "rk45":
+            while(self.rk45.t < self.t + self.action_timestep_s and self.rk45.t < self.episode_length_s):
+                self.rk45.step()
+
+                self.state[:2] = self.rk45.y
+                if self.check_x_limits(self.state):
+                    done = True
+                    break
+
+            self.t = self.rk45.t
+
+        reward = self.action_timestep_s * (1.0 - (abs(self.state[0] - r_1) / self.slider_range) )
+
+        if (self.t >= self.episode_length_s):
+            done = True
 
         return self.observe(self.state), reward, done
 
 
-    def reset(self):
+    def check_x_limits(self, state):
+        return ((state[0] < self.slider_limits[0]) or (state[0] > self.slider_limits[1]))
 
+    def check_force_limits(self, state):
+        return ((state[4] < self.force_net_limits[0]) or (state[4] > self.force_net_limits[1])
+                or (state[6] < self.force_interaction_limits[0]) or (state[6] > self.force_interaction_limits[1]))
+
+
+    def slider_dynamics(self, t, y):
+        x, x_dot = y
+        force_net = self.state[4]
+
+        acceleration = (force_net - (self.slider_friction_coeff * x_dot)) / self.slider_mass
+        velocity = x_dot
+
+        return [velocity, acceleration]
+
+
+    def reset(self):
         self.t = 0.0
         self.error = 0.0
 
         #state = x, x_dot, r, r_dot, force_net, force_net_dot, force_interaction, force_interaction_dot
         self.state = np.zeros((8,), dtype=np.float32)
+
+        if self.integration == "rk45":
+            self.rk45 = RK45(self.slider_dynamics, 0.0, self.state[:2], self.episode_length_s, max_step=self.action_timestep_s)
 
         return self.observe(self.state)
 
