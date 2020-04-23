@@ -35,10 +35,10 @@ class DyadSliderEnv(gym.Env):
     }
 
     def __init__(self,
-                 simulation_freq_Hz = 1000,
-                 action_freq_Hz = 100,
+                 simulation_freq_Hz = 500,
+                 action_freq_Hz = 50,
 
-                 episode_length_s = 30.0,
+                 episode_length_s = 20.0,
 
                  n_agents = 2,
                  agent_force_min = -1.0,
@@ -51,7 +51,7 @@ class DyadSliderEnv(gym.Env):
                  slider_friction_coeff = 0.0,
                  slider_limits = np.array([-1.0, 1.0]),
 
-                 reference_trajectory_fn = lambda x: np.sin(x * np.pi),
+                 reference_generator = None,
 
                  integration = "euler", # "rk45"
     ):
@@ -88,12 +88,12 @@ class DyadSliderEnv(gym.Env):
         self.force_net_limits = force_net_limits
         self.force_interaction_limits = force_interaction_limits
 
-        self.reference_trajectory_fn = reference_trajectory_fn
+        self.reference_generator = reference_generator
 
 
+        self.viewer = None
         self.reset()
        
-        self.viewer = None
 
 
     def step(self, action):
@@ -190,6 +190,12 @@ class DyadSliderEnv(gym.Env):
         if self.integration == "rk45":
             self.rk45 = RK45(self.slider_dynamics, 0.0, self.state[:2], self.episode_length_s, max_step=self.action_timestep_s)
 
+        self.reference_trajectory_fn = self.reference_generator()
+
+        if self.viewer:
+            self.viewer.close()
+            self.viewer = None
+
         return self.observe(self.state)
 
     def observe(self, state):
@@ -215,7 +221,7 @@ class DyadSliderEnv(gym.Env):
         egg_height = 30.0
 
         reference_width = 2.0
-        reference_x_resolution = int(10 * self.episode_length_s)
+        reference_x_resolution = int(20 * self.episode_length_s)
 
         reference_points = np.zeros((reference_x_resolution, 2))
         reference_scale = np.linspace(0, self.episode_length_s, reference_x_resolution)
